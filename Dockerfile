@@ -17,13 +17,12 @@ RUN pip3 install --break-system-packages yt-dlp
 # Install n8n globally
 RUN npm install -g n8n
 
-# Create non-root user
-RUN addgroup -g 1000 n8n && \
-    adduser -D -u 1000 -G n8n n8n && \
-    mkdir -p /home/n8n/.n8n && \
-    chown -R n8n:n8n /home/n8n
+# Setup directories (node user already exists in base image)
+RUN mkdir -p /home/node/.n8n && \
+    chown -R node:node /home/node/.n8n && \
+    chmod 700 /home/node/.n8n
 
-USER n8n
+USER node
 
 # Environment variables
 ENV N8N_HOST=0.0.0.0 \
