@@ -1,0 +1,11 @@
+# N8N data (don't commit credentials)
+.n8n/
+*.env.local
+
+# Temp files
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

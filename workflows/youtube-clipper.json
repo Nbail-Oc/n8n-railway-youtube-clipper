@@ -1,0 +1,1329 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const videoUrl = $input.first().json.body.videoUrl;\nconst contentTypes = $input.first().json.body.contentTypes || [];\n\nconst videoIdMatch = videoUrl.match(/(?:youtube\\.com\\/(?:[^\\/]+\\/.+\\/|(?:v|e(?:mbed)?)\\/|.*[?&]v=)|youtu\\.be\\/)([^\"&?\\/ ]{11})/);\n\nif (!videoIdMatch) {\n  throw new Error('Invalid YouTube URL');\n}\n\nconst videoId = videoIdMatch[1];\n\nreturn {\n  json: {\n    videoId: videoId,\n    videoUrl: videoUrl,\n    contentTypes: contentTypes,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "e7a101fd-d21a-4e43-a26d-4ff802273350",
+      "name": "Extract Video ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2912,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/karamelo~youtube-transcripts/runs?token={{ $env.APIFY_API_TOKEN }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"urls\": [\n    \"{{ $json.videoUrl }}\"\n  ]\n}",
+        "options": {}
+      },
+      "id": "ab0bbd75-7a05-4a63-a82c-29d7abc483b0",
+      "name": "Start Apify Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2688,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nconst runId = response.data?.id;\nconst defaultDatasetId = response.data?.defaultDatasetId;\n\nif (!runId) {\n  throw new Error('Could not get Apify run ID');\n}\n\nreturn {\n  json: {\n    runId: runId,\n    datasetId: defaultDatasetId,\n    statusUrl: `https://api.apify.com/v2/actor-runs/${runId}?token={{ $env.APIFY_API_TOKEN }}`,\n    datasetUrl: `https://api.apify.com/v2/datasets/${defaultDatasetId}/items?token={{ $env.APIFY_API_TOKEN }}`,\n    pollCount: 0,\n    maxPolls: 12\n  }\n};"
+      },
+      "id": "8e017e03-efd9-4a1e-8c3d-89943a7a541a",
+      "name": "Extract Run ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2464,
+        720
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "440ebd8d-1cbc-4374-98cf-3a7c482ba759",
+      "name": "Wait 5s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -2240,
+        720
+      ],
+      "webhookId": "wait-webhook-5s"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.statusUrl }}",
+        "options": {}
+      },
+      "id": "304703fb-a6fe-4889-b578-16b16537f1d2",
+      "name": "Check Run Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2032,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.data.status }}",
+              "value2": "SUCCEEDED"
+            }
+          ]
+        }
+      },
+      "id": "887363de-4f2b-4eb8-9664-4037b5390de5",
+      "name": "Is Run Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1808,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Extract Run ID').item.json.datasetUrl }}",
+        "options": {}
+      },
+      "id": "a36a776b-1c86-40e7-9612-c144596713e1",
+      "name": "Get Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1584,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Increment poll count and check if we should continue\nconst previousData = $('Extract Run ID').item.json;\nconst pollCount = previousData.pollCount + 1;\nconst maxPolls = previousData.maxPolls;\n\nif (pollCount >= maxPolls) {\n  throw new Error('Timeout: Apify scraper took too long. Max wait time: 60 seconds.');\n}\n\nreturn {\n  json: {\n    runId: previousData.runId,\n    datasetId: previousData.datasetId,\n    statusUrl: previousData.statusUrl,\n    datasetUrl: previousData.datasetUrl,\n    pollCount: pollCount,\n    maxPolls: maxPolls\n  }\n};"
+      },
+      "id": "79caf373-6606-49cc-984c-445944f066aa",
+      "name": "Increment Poll Count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\nconst videoData = $('Extract Video ID').item.json;\n\n// The HTTP Request node returns the response body directly\nlet results;\n\nif (Array.isArray(inputData)) {\n  results = inputData;\n} else {\n  results = [inputData];\n}\n\nif (results.length === 0) {\n  throw new Error('Empty results from Apify scraper');\n}\n\nconst videoInfo = results[0];\n\n// karamelo/youtube-transcripts returns transcript in 'captions' array\nlet transcript;\n\nif (videoInfo.captions && Array.isArray(videoInfo.captions)) {\n  // Join all caption lines with spaces\n  transcript = videoInfo.captions.join(' ');\n} else if (videoInfo.text) {\n  transcript = videoInfo.text;\n} else if (videoInfo.transcript) {\n  transcript = videoInfo.transcript;\n}\n\nif (!transcript) {\n  throw new Error('No transcript found in Apify results. Video may not have captions.');\n}\n\nreturn {\n  json: {\n    success: true,\n    videoId: videoData.videoId,\n    videoUrl: videoData.videoUrl,\n    contentTypes: videoData.contentTypes,\n    transcript: transcript,\n    metadata: {\n      title: videoInfo.title || 'Unknown',\n      channel: videoInfo.channelName || videoInfo.author || 'Unknown',\n      duration: videoInfo.duration || 'Unknown',\n      videoId: videoInfo.videoId || videoData.videoId,\n      wordCount: transcript.split(/\\s+/).length,\n      characterCount: transcript.length\n    },\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "a0c0de87-504e-49f5-a5b6-8fe28debc413",
+      "name": "Process Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1360,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Isse Youtube Transcribe Hota hai\n",
+        "height": 80
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -3120,
+        608
+      ],
+      "typeVersion": 1,
+      "id": "f0248d48-6b03-4029-98d1-02773d61968b",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ingest-content",
+        "responseMode": "responseNode",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "POST, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization, X-Requested-With"
+              },
+              {
+                "name": "Access-Control-Max-Age",
+                "value": "86400"
+              }
+            ]
+          }
+        }
+      },
+      "id": "d4421bea-0936-496e-8c81-d898111199eb",
+      "name": "Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -3152,
+        720
+      ],
+      "webhookId": "ingest-content-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get transcript and content types from previous node\nconst transcript = $('Process Results').item.json.transcript;\nconst contentTypes = $('Extract Video ID').item.json.contentTypes;\nconst videoMetadata = $('Process Results').item.json.metadata;\n\nreturn {\n  json: {\n    transcript: transcript,\n    contentTypes: contentTypes,\n    videoMetadata: videoMetadata,\n    wordCount: transcript.split(/\\s+/).length,\n    characterCount: transcript.length\n  }\n};"
+      },
+      "id": "bd5d2ef1-8d18-4571-81df-eb8f416e0b1e",
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.GROQ_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'llama-3.3-70b-versatile',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are an expert content analyst. Create a comprehensive summary and extract key themes from video transcripts. Return ONLY valid JSON with no markdown formatting.'\n    },\n    {\n      role: 'user',\n      content: `Analyze this video transcript and provide:\\n\\n1. A concise summary (2-3 paragraphs, 150-250 words)\\n2. 5-7 key themes/topics with brief descriptions\\n3. Main takeaways (3-5 bullet points)\\n4. Target audience identification\\n5. Content tone/style (professional, casual, educational, entertaining, etc.)\\n\\nTranscript (${$json.wordCount} words):\\n${$json.transcript}\\n\\nReturn in this JSON format:\\n{\\n  \"summary\": \"detailed summary here\",\\n  \"key_themes\": [\\n    {\"theme\": \"theme name\", \"description\": \"brief description\"},\\n    ...\\n  ],\\n  \"main_takeaways\": [\"takeaway 1\", \"takeaway 2\", ...],\\n  \"target_audience\": \"audience description\",\\n  \"content_tone\": \"tone description\",\\n  \"primary_keywords\": [\"keyword1\", \"keyword2\", ...]\\n}`\n    }\n  ],\n  temperature: 0.3,\n  max_tokens: 2000,\n  response_format: { type: 'json_object' }\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "20fd92d4-4c3b-4a25-8cef-ab17144baba5",
+      "name": "Step 1: Summarize & Extract Themes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -928,
+        784
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2ZaVFxkylitBTmdC",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Step 1 results\nconst step1Response = $input.first().json;\nconst analysis = JSON.parse(step1Response.choices[0].message.content);\n\n// Get original data\nconst originalData = $('Prepare Data').item.json;\n\nconsole.log('✅ Step 1 Complete: Summary & Themes Extracted');\nconsole.log(`   Themes found: ${analysis.key_themes.length}`);\nconsole.log(`   Takeaways: ${analysis.main_takeaways.length}`);\n\nreturn {\n  json: {\n    ...originalData,\n    analysis: analysis\n  }\n};"
+      },
+      "id": "50155c1d-3468-473c-980e-899fc1780a1d",
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.GROQ_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'llama-3.3-70b-versatile',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are an expert content creator specializing in social media and blog content. Generate engaging, platform-optimized content based on video transcripts. Return ONLY valid JSON with no markdown.'\n    },\n    {\n      role: 'user',\n      content: `Generate content for these types: ${$json.contentTypes.join(', ')}\\n\\nVIDEO CONTEXT:\\nTitle: ${$json.videoMetadata.title}\\nChannel: ${$json.videoMetadata.channel}\\nDuration: ${$json.videoMetadata.duration}\\n\\nSUMMARY:\\n${$json.analysis.summary}\\n\\nKEY THEMES:\\n${$json.analysis.key_themes.map((t, i) => `${i+1}. ${t.theme}: ${t.description}`).join('\\\\n')}\\n\\nMAIN TAKEAWAYS:\\n${$json.analysis.main_takeaways.map((t, i) => `${i+1}. ${t}`).join('\\\\n')}\\n\\nTARGET AUDIENCE: ${$json.analysis.target_audience}\\nTONE: ${$json.analysis.content_tone}\\n\\nGENERATE CONTENT for each requested type following these rules:\\n\\nBLOG:\\n- 800-1200 words, well-structured with H2/H3 headings\\n- SEO-optimized with keywords\\n- Engaging intro, detailed body, strong conclusion\\n- Include examples and actionable insights\\n\\nINSTAGRAM_POST:\\n- 150-300 characters caption\\n- Hook in first line\\n- Include 5-8 relevant hashtags\\n- Call-to-action\\n- Aspect ratio: 1:1\\n\\nINSTAGRAM_REEL_SCRIPT:\\n- 30-60 second script (120-180 words)\\n- Hook (first 3 seconds)\\n- Main content with 3-4 key points\\n- Strong CTA\\n- Aspect ratio: 9:16\\n\\nYOUTUBE_SHORTS_SCRIPT:\\n- 45-60 second script (150-200 words)\\n- Attention-grabbing hook\\n- Fast-paced delivery\\n- Clear value proposition\\n- End with CTA\\n- Aspect ratio: 9:16\\n\\nX_POST (Twitter):\\n- 200-280 characters\\n- Punchy, direct\\n- 2-3 relevant hashtags\\n- Aspect ratio: 16:9\\n\\nLINKEDIN_POST:\\n- 1200-1500 characters\\n- Professional tone\\n- Personal story or insight\\n- Industry relevance\\n- Question or CTA to drive engagement\\n- Aspect ratio: 1.91:1\\n\\nReturn JSON format:\\n{\\n  \"items\": [\\n    {\\n      \"content_type\": \"blog\",\\n      \"content\": \"full content here (min 100 chars)\",\\n      \"content_length\": 1050,\\n      \"word_count\": 180,\\n      \"aspect_ratio\": \"16:9\",\\n      \"platform_notes\": \"any platform-specific tips\"\\n    },\\n    ...\\n  ]\\n}`\n    }\n  ],\n  temperature: 0.7,\n  max_tokens: 8000,\n  response_format: { type: 'json_object' }\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "987a6dbc-454c-4588-a97a-7c35f3723d4b",
+      "name": "Step 2: Generate Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -480,
+        784
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2ZaVFxkylitBTmdC",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Step 2 results\nconst step2Response = $input.first().json;\nconst contentGeneration = JSON.parse(step2Response.choices[0].message.content);\n\n// Get analysis data\nconst analysisData = $('Parse Analysis').item.json;\n\nconsole.log('✅ Step 2 Complete: Content Generated');\nconsole.log(`   Items generated: ${contentGeneration.items.length}`);\n\nreturn {\n  json: {\n    ...analysisData,\n    generated_content: contentGeneration.items\n  }\n};"
+      },
+      "id": "6b0b8706-b79c-4272-b3cd-f97545cbc13a",
+      "name": "Parse Generated Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.GROQ_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'llama-3.3-70b-versatile',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are an expert at creating detailed, high-quality image generation prompts for AI image generators like DALL-E, Midjourney, and Stable Diffusion. Create prompts that are specific, detailed, and optimized for the content type. Return ONLY valid JSON.'\n    },\n    {\n      role: 'user',\n      content: `Generate detailed image prompts for each content item.\\n\\nVIDEO CONTEXT:\\nTitle: ${$json.videoMetadata.title}\\nChannel: ${$json.videoMetadata.channel}\\nTone: ${$json.analysis.content_tone}\\nThemes: ${$json.analysis.key_themes.map(t => t.theme).join(', ')}\\n\\nCONTENT ITEMS:\\n${JSON.stringify($json.generated_content, null, 2)}\\n\\nFor each content item, create a detailed image prompt that:\\n1. Matches the content theme and message\\n2. Is optimized for the aspect ratio (16:9, 1:1, 9:16, 1.91:1)\\n3. Includes style keywords (modern, professional, vibrant, etc.)\\n4. Specifies composition, lighting, colors\\n5. Is 50-150 words long\\n6. Avoids text overlays (these will be added later)\\n\\nIMAGE PROMPT GUIDELINES:\\n- Blog (16:9): Wide, professional, editorial style\\n- Instagram Post (1:1): Centered, visually balanced, eye-catching\\n- Instagram Reel/Shorts (9:16): Vertical, dynamic, mobile-first\\n- X Post (16:9): Punchy, clear focal point, social media optimized\\n- LinkedIn (1.91:1): Professional, business-appropriate, clean\\n\\nReturn JSON format:\\n{\\n  \"items\": [\\n    {\\n      \"content_type\": \"blog\",\\n      \"image_prompt\": \"detailed 50-150 word prompt here\",\\n      \"aspect_ratio\": \"16:9\",\\n      \"style_keywords\": [\"modern\", \"professional\", \"clean\"],\\n      \"color_palette\": \"description of colors\",\\n      \"composition_notes\": \"how elements should be arranged\"\\n    },\\n    ...\\n  ]\\n}`\n    }\n  ],\n  temperature: 0.6,\n  max_tokens: 4000,\n  response_format: { type: 'json_object' }\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "7b667485-c70d-4b27-bad1-50ffec6985a1",
+      "name": "Step 3: Generate Image Prompts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -32,
+        784
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2ZaVFxkylitBTmdC",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Step 3 results\nconst step3Response = $input.first().json;\nconst imagePrompts = JSON.parse(step3Response.choices[0].message.content);\n\n// Get content data\nconst contentData = $('Parse Generated Content').item.json;\n\n// Merge content with image prompts\nconst mergedItems = contentData.generated_content.map((item, idx) => {\n  const promptData = imagePrompts.items[idx] || {};\n  return {\n    ...item,\n    image_prompt: promptData.image_prompt || 'A professional, modern image',\n    aspect_ratio: item.aspect_ratio || promptData.aspect_ratio || '16:9',\n    style_keywords: promptData.style_keywords || [],\n    color_palette: promptData.color_palette || 'balanced',\n    composition_notes: promptData.composition_notes || ''\n  };\n});\n\nconsole.log('✅ Step 3 Complete: Image Prompts Generated');\nconsole.log(`   Prompts created: ${imagePrompts.items.length}`);\n\nreturn {\n  json: {\n    ...contentData,\n    generated_content: mergedItems\n  }\n};"
+      },
+      "id": "31ca9f8b-3c6e-4d74-aa28-f2d9923c3ae9",
+      "name": "Merge Image Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.GROQ_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'llama-3.3-70b-versatile',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are a social media analytics expert. Score content based on virality potential, usefulness, engagement likelihood, and quality. Be realistic and data-driven. Return ONLY valid JSON.'\n    },\n    {\n      role: 'user',\n      content: `Score each content item on multiple metrics (0-100 scale).\\n\\nVIDEO CONTEXT:\\nTitle: ${$json.videoMetadata.title}\\nChannel: ${$json.videoMetadata.channel}\\nTarget Audience: ${$json.analysis.target_audience}\\nContent Tone: ${$json.analysis.content_tone}\\n\\nCONTENT ITEMS TO SCORE:\\n${JSON.stringify($json.generated_content, null, 2)}\\n\\nSCORING CRITERIA:\\n\\n1. VIRALITY (0-100):\\n   - Emotional appeal\\n   - Shareability\\n   - Trending topic alignment\\n   - Hook strength\\n   - Platform algorithm favorability\\n\\n2. USEFULNESS (0-100):\\n   - Actionable insights\\n   - Educational value\\n   - Problem-solving capability\\n   - Practical application\\n   - Information density\\n\\n3. ENGAGEMENT (0-100):\\n   - Comment likelihood\\n   - Call-to-action effectiveness\\n   - Discussion potential\\n   - Question quality\\n   - Community building\\n\\n4. QUALITY (0-100):\\n   - Writing clarity\\n   - Structure and flow\\n   - Grammar and style\\n   - Platform optimization\\n   - Professional polish\\n\\n5. SEO/DISCOVERABILITY (0-100):\\n   - Keyword optimization\\n   - Hashtag strategy\\n   - Search intent alignment\\n   - Trend alignment\\n\\nReturn JSON format:\\n{\\n  \"items\": [\\n    {\\n      \"content_type\": \"blog\",\\n      \"scores\": {\\n        \"virality\": 75,\\n        \"usefulness\": 85,\\n        \"engagement\": 70,\\n        \"quality\": 90,\\n        \"seo_discoverability\": 80,\\n        \"overall\": 80\\n      },\\n      \"score_reasoning\": \"Brief explanation of scores\",\\n      \"improvement_suggestions\": [\"suggestion 1\", \"suggestion 2\"],\\n      \"best_time_to_post\": \"weekday mornings\",\\n      \"estimated_reach\": \"medium-high\"\\n    },\\n    ...\\n  ],\\n  \"summary\": {\\n    \"highest_virality\": \"content_type\",\\n    \"highest_usefulness\": \"content_type\",\\n    \"overall_quality_avg\": 78,\\n    \"recommendations\": [\"overall recommendation 1\", ...]\\n  }\\n}`\n    }\n  ],\n  temperature: 0.4,\n  max_tokens: 6000,\n  response_format: { type: 'json_object' }\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "777b8a0d-7b0c-4770-8342-58cf686caea6",
+      "name": "Step 4: Score Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        432,
+        720
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2ZaVFxkylitBTmdC",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Step 5: Package Items - FIXED VERSION\n// This extracts items from the nested structure and outputs them as individual items\n\nconst step4Response = $input.first().json;\nconst scoringData = JSON.parse(step4Response.choices[0].message.content);\nconst mergedData = $('Merge Image Prompts').item.json;\nconst webhookData = $('Webhook1').item.json.body;\n\n// Extract video ID\nconst videoIdMatch = webhookData.videoUrl ? webhookData.videoUrl.match(/(?:v=|youtu\\.be\\/)([^&?\\s]+)/) : null;\nconst videoId = videoIdMatch ? videoIdMatch[1] : 'unknown';\n\nconsole.log('✅ Step 5: Packaging Items for Split In Batches');\nconsole.log(`   Total items to package: ${mergedData.generated_content.length}`);\n\n// Create INDIVIDUAL items (not wrapped in an object)\nconst finalItems = mergedData.generated_content.map((item, idx) => {\n  const scoreData = scoringData.items[idx] || {};\n  \n  console.log(`   📦 Item ${idx + 1}: ${item.content_type}`);\n  \n  return {\n    json: {\n      content_type: item.content_type,\n      content: item.content,\n      image_prompt: item.image_prompt,\n      aspect_ratio: item.aspect_ratio,\n      virality_score: scoreData.scores?.virality || 50,\n      usefulness_score: scoreData.scores?.usefulness || 50,\n      video_id: videoId,\n      video_url: webhookData.videoUrl || 'unknown',\n      video_title: mergedData.videoMetadata?.title || 'Unknown',\n      video_channel: mergedData.videoMetadata?.channel || 'Unknown',\n      item_index: idx,\n      total_items: mergedData.generated_content.length\n    }\n  };\n});\n\nconsole.log(`✅ Step 5 Complete: ${finalItems.length} items ready for processing`);\n\n// Return array of items (this is what Split In Batches needs!)\nreturn finalItems;"
+      },
+      "id": "40b92bf4-1289-4809-98ed-701dbdc5f8f5",
+      "name": "Step 5: Package for Quality Control",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "94e48c68-63ac-41cc-bf18-3e51292b0979",
+      "name": "Split In Batches1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1104,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://image.pollinations.ai/prompt/{{ encodeURIComponent($json.image_prompt || 'A professional modern image') }}?{{ $json.aspect_ratio === '16:9' ? 'width=1024&height=576' : $json.aspect_ratio === '1:1' ? 'width=1024&height=1024' : $json.aspect_ratio === '9:16' ? 'width=576&height=1024' : $json.aspect_ratio === '1.91:1' ? 'width=1200&height=628' : 'width=1024&height=1024' }}&nologo=true&enhance=true&model=flux",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "30dd2ffe-2e1f-4849-96d4-a01a2e2be1a6",
+      "name": "Generate Image1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "await new Promise(resolve => setTimeout(resolve, 1000));\nconsole.log(`⏳ Rate limit pause (1s)...`);\nreturn $input.all();"
+      },
+      "id": "78eea53c-440a-40b1-a008-92696c483be8",
+      "name": "Rate Limiter1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "ab0bf7ae-35b6-4d75-8746-5d61ad0d0968",
+      "name": "Return Response1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItem = $input.first();\nconst binaryData = inputItem.binary?.data;\nconst originalData = inputItem.json || {};\n\nconsole.log(`🖼️  Processing image ${originalData.item_index + 1}/${originalData.total_items} - ${originalData.content_type}`);\n\nconst FALLBACK_IMAGES = [\n  'https://lh3.googleusercontent.com/gg-dl/ABS2GSmlehA9RlIZIV0MJqjMURe3l4GltDeafmn1IPz5MutFBEJZBGnRNSNKNjNUupMzUMZx9s_1vx4fV2jPU9NNXVxunidNheOQ4m_Hvi0c8G7x0UrQ5gBCoXZvqapUuldFgr4f7H8NlfOtsOFBDh2aCPmvaKqa4PHFIdlVzdMRV3AH8inZ2A=s1024-rj',\n  'https://lh3.googleusercontent.com/gg-dl/ABS2GSnugLG8o_IVfWelBLjk68A4VTJVjawNoWDy209RWDp5SoyJrEr8-775v12SyOAc2eOyV4jdBZFZmsLkHJb-wWWDBZlZnxX1FymVgPPgFP1mZ8Fg0nSSv0ErbXiywz9QAKvIok0qmNuBIveHTYpLrAZw_MWWEH69Yv0Dfms1xLqHI0KWCQ=s1024-rj',\n  'https://lh3.googleusercontent.com/gg-dl/ABS2GSl86532TEOiCcUatMuZB_AIYi3fBins-r_zrUlU8Crj4KiUdZ-bq2PSah86lFeMbFeL9JEHkncYuebdPXSCYjWmae_p7qDCvPOjBUkmyvxqb0LPUn3gtjTupoxP7O2Hxl8-FgWvV2PSqRSRMG1ulTZPHLkHkD5gc2Lc1GD4jD-BFThOag=s1024-rj'\n];\n\nlet imageUrl = null;\nlet imageBase64 = null;\nlet imageGenerated = false;\nlet generationStatus = 'placeholder';\nlet generationTime = '0s';\nlet errorMessage = null;\n\ntry {\n  if (binaryData && binaryData.data) {\n    imageBase64 = binaryData.data.toString('base64');\n    imageUrl = `data:${binaryData.mimeType || 'image/png'};base64,${imageBase64}`;\n    imageGenerated = true;\n    generationStatus = 'success';\n    generationTime = '1-3s';\n    console.log(`✅ Image generated successfully (${binaryData.data.length} bytes)`);\n  } else {\n    throw new Error('No binary data received from Pollinations');\n  }\n} catch (error) {\n  console.log(`⚠️  Image generation failed: ${error.message}`);\n  const typeIndex = ['blog', 'instagram_post', 'instagram_reel_script', 'youtube_shorts_script', 'x_post'].indexOf(originalData.content_type);\n  const fallbackIndex = typeIndex >= 0 ? typeIndex % FALLBACK_IMAGES.length : 0;\n  imageUrl = FALLBACK_IMAGES[fallbackIndex];\n  imageGenerated = false;\n  generationStatus = 'failed_using_placeholder';\n  generationTime = '0s';\n  errorMessage = error.message;\n}\n\nreturn {\n  json: {\n    id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n    content_type: originalData.content_type,\n    content: originalData.content,\n    image_url: imageUrl,\n    image_base64: imageBase64,\n    image_prompt: originalData.image_prompt,\n    aspect_ratio: originalData.aspect_ratio,\n    scores: {\n      virality: originalData.virality_score || 50,\n      usefulness: originalData.usefulness_score || 50\n    },\n    image_generated: imageGenerated,\n    image_error: errorMessage,\n    generation_status: generationStatus,\n    generation_time: generationTime,\n    video: {\n      id: originalData.video_id,\n      url: originalData.video_url,\n      title: originalData.video_title,\n      channel: originalData.video_channel\n    },\n    processed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "99d16b9f-8d7a-46ab-9720-9c5e895e60fb",
+      "name": "Process Image Response4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconsole.log(`\\n=== FINAL PACKAGING ===`);\nconsole.log(`📦 Items received: ${items.length}`);\n\nif (items.length === 0) {\n  throw new Error('No items received in Final Packaging');\n}\n\n// Get video info from the first item\nconst firstItem = items[0].json;\nconst videoInfo = (firstItem && firstItem.video) ? firstItem.video : {\n  id: 'unknown',\n  url: 'unknown',\n  title: 'unknown',\n  channel: 'unknown'\n};\n\n// Get transcript from Process Results node\nconst processResultsData = $('Process Results').first().json;\nconst transcript = processResultsData.transcript || '';\nconst videoMetadata = processResultsData.metadata || {};\n\n// ✅ FIX: Get analysis data from Parse Analysis node (NOT Prepare Data)\nconst parseAnalysisData = $('Parse Analysis').first().json;\nconst analysis = parseAnalysisData.analysis || {\n  summary: '',\n  key_themes: [],\n  main_takeaways: [],\n  target_audience: '',\n  content_tone: '',\n  primary_keywords: []\n};\n\nconsole.log(`✅ Analysis data retrieved:`);\nconsole.log(`   Summary length: ${analysis.summary?.length || 0} chars`);\nconsole.log(`   Key themes: ${analysis.key_themes?.length || 0}`);\nconsole.log(`   Takeaways: ${analysis.main_takeaways?.length || 0}`);\n\n// Get scoring data from Step 4 node\nconst step4Response = $('Step 4: Score Content').first().json;\nlet scoringSummary = {};\ntry {\n  const scoringData = JSON.parse(step4Response.choices[0].message.content);\n  scoringSummary = scoringData.summary || {};\n} catch (e) {\n  console.log('⚠️ Could not parse scoring summary');\n}\n\n// Map all items with NULL-SAFE access\nconst generatedItems = items.map((item, idx) => {\n  const data = item.json || {};\n  \n  // ✅ FIX: Get ALL score data from Step 4, not from item.json\n  let scores = { \n    virality: 50, \n    usefulness: 50,\n    engagement: 50,\n    quality: 50,\n    seo_discoverability: 50,\n    overall: 50\n  };\n  let scoreReasoning = '';\n  let improvementSuggestions = [];\n  let bestTimeToPost = '';\n  let estimatedReach = '';\n  \n  try {\n    const step4Data = JSON.parse(step4Response.choices[0].message.content);\n    const itemScore = step4Data.items[idx];\n    if (itemScore) {\n      // ✅ Get ALL scores from Step 4\n      scores = {\n        virality: itemScore.scores?.virality || 50,\n        usefulness: itemScore.scores?.usefulness || 50,\n        engagement: itemScore.scores?.engagement || 50,\n        quality: itemScore.scores?.quality || 50,\n        seo_discoverability: itemScore.scores?.seo_discoverability || 50,\n        overall: itemScore.scores?.overall || 50\n      };\n      scoreReasoning = itemScore.score_reasoning || '';\n      improvementSuggestions = itemScore.improvement_suggestions || [];\n      bestTimeToPost = itemScore.best_time_to_post || '';\n      estimatedReach = itemScore.estimated_reach || '';\n    }\n  } catch (e) {\n    console.log(`⚠️ Could not parse score details for item ${idx}`);\n  }\n  \n  return {\n    id: data.id || `item_${idx}`,\n    content_type: data.content_type || 'unknown',\n    content: data.content || '',\n    image_url: data.image_url || null,\n    image_base64: data.image_base64 || null,\n    image_prompt: data.image_prompt || '',\n    aspect_ratio: data.aspect_ratio || '16:9',\n    scores: scores,  // ✅ Now uses scores from Step 4\n    score_reasoning: scoreReasoning,\n    improvement_suggestions: improvementSuggestions,\n    best_time_to_post: bestTimeToPost,\n    estimated_reach: estimatedReach,\n    image_generated: data.image_generated || false,\n    image_error: data.image_error || null,\n    generation_status: data.generation_status || 'unknown',\n    generation_time: data.generation_time || '0s',\n    processed_at: data.processed_at || new Date().toISOString()\n  };\n});\n\n// Calculate stats\nconst successfulImages = generatedItems.filter(i => i.image_generated === true).length;\nconst failedImages = generatedItems.length - successfulImages;\n\nconst avgVirality = generatedItems.length > 0 \n  ? Math.round(\n      generatedItems.reduce((sum, i) => {\n        const score = (i.scores && typeof i.scores.virality === 'number') \n          ? i.scores.virality \n          : 50;\n        return sum + score;\n      }, 0) / generatedItems.length\n    )\n  : 50;\n\nconst avgUsefulness = generatedItems.length > 0\n  ? Math.round(\n      generatedItems.reduce((sum, i) => {\n        const score = (i.scores && typeof i.scores.usefulness === 'number') \n          ? i.scores.usefulness \n          : 50;\n        return sum + score;\n      }, 0) / generatedItems.length\n    )\n  : 50;\n\nconsole.log(`\\n📊 Summary:`);\nconsole.log(`  Total items: ${generatedItems.length}`);\nconsole.log(`  Successful images: ${successfulImages}`);\nconsole.log(`  Failed images: ${failedImages}`);\nconsole.log(`  Avg Virality: ${avgVirality}`);\nconsole.log(`  Avg Usefulness: ${avgUsefulness}`);\n\nreturn {\n  json: {\n    success: true,\n    timestamp: new Date().toISOString(),\n    \n    // Video information\n    video: {\n      id: videoInfo.id,\n      url: videoInfo.url,\n      title: videoMetadata.title || videoInfo.title,\n      channel: videoMetadata.channel || videoInfo.channel,\n      duration: videoMetadata.duration || 'Unknown',\n      word_count: videoMetadata.wordCount || 0,\n      character_count: videoMetadata.characterCount || 0\n    },\n    \n    // ✅ Full transcript (now properly included)\n    transcript: {\n      full_text: transcript,\n      word_count: videoMetadata.wordCount || 0,\n      character_count: videoMetadata.characterCount || 0\n    },\n    \n    // ✅ Analysis & Summary (now properly populated)\n    analysis: {\n      summary: analysis.summary || '',\n      key_themes: analysis.key_themes || [],\n      main_takeaways: analysis.main_takeaways || [],\n      target_audience: analysis.target_audience || '',\n      content_tone: analysis.content_tone || '',\n      primary_keywords: analysis.primary_keywords || []\n    },\n    \n    // Generated content items\n    content: {\n      total_items: generatedItems.length,\n      successful_images: successfulImages,\n      failed_images: failedImages,\n      average_scores: {\n        virality: avgVirality,\n        usefulness: avgUsefulness\n      },\n      scoring_summary: scoringSummary,\n      items: generatedItems\n    },\n    \n    // Metadata\n    metadata: {\n      workflow_version: 'in-house-v1-ENHANCED',\n      powered_by: 'n8n + GroqCloud (5 Steps) + Pollinations.ai',\n      processing_date: new Date().toISOString()\n    }\n  }\n};"
+      },
+      "id": "cb5b8b17-0893-4d3f-8f0d-e5f2de1bc9fc",
+      "name": "Final Packaging5",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clip-youtube",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2fc7edff-2f84-43f3-a755-e535a7cdf8ae",
+      "name": "🎬 Webhook: Start1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -3104,
+        1776
+      ],
+      "webhookId": "youtube-clipper"
+    },
+    {
+      "parameters": {
+        "jsCode": "const youtubeUrl = $input.item.json.body.youtube_url || $input.item.json.youtube_url;\nconst subtitleStyle = $input.item.json.body.subtitle_style || 'tiktok';\n\nif (!youtubeUrl) {\n  throw new Error('Missing youtube_url parameter');\n}\n\nconst videoIdMatch = youtubeUrl.match(/(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([a-zA-Z0-9_-]{11})/);\n\nif (!videoIdMatch) {\n  throw new Error('Invalid YouTube URL');\n}\n\nconst videoId = videoIdMatch[1];\n\nconsole.log(`✅ Video ID: ${videoId}`);\nconsole.log(`🎨 Subtitle style: ${subtitleStyle}`);\n\nreturn {\n  json: {\n    videoId,\n    youtubeUrl,\n    subtitleStyle,\n    tempFolder: `/home/node/.n8n/youtube_${videoId}_${Date.now()}`\n  }\n};"
+      },
+      "id": "f7b840e0-5066-4d63-9093-6f090eb72cc8",
+      "name": "📝 Extract Video ID1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2880,
+        1776
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=mkdir -p {{ $json.tempFolder }} && cd {{ $json.tempFolder }} && yt-dlp -f 'bestvideo[height<=1920]+bestaudio/best' --write-auto-sub --sub-lang en --convert-subs srt -o 'video.%(ext)s' '{{ $json.youtubeUrl }}' && echo \"DOWNLOADED: $(ls -lh video.*)\" && echo \"SUBTITLES: $(ls -lh *.srt 2>/dev/null || echo 'No subs')\""
+      },
+      "id": "ff9455f6-91c4-40e1-b79a-f4bb2dea14f7",
+      "name": "⬇️ Download Video + Subs1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -2672,
+        1776
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = $input.item.json.stdout;\nconst videoData = $('📝 Extract Video ID1').item.json;\n\nconst videoFileMatch = output.match(/video\\.(\\w+)/);\nconst videoFile = videoFileMatch ? `video.${videoFileMatch[1]}` : 'video.mp4';\n\nconst hasSubs = output.includes('.srt');\nconst subFile = hasSubs ? `video.en.srt` : null;\n\nconsole.log(`✅ Video downloaded: ${videoFile}`);\nconsole.log(`📝 Subtitles: ${hasSubs ? subFile : 'NONE - will generate'}`);\n\nreturn {\n  json: {\n    ...videoData,\n    videoFile: `${videoData.tempFolder}/${videoFile}`,\n    subFile: hasSubs ? `${videoData.tempFolder}/${subFile}` : null,\n    hasSubs\n  }\n};"
+      },
+      "id": "81794411-2fc7-40a4-978f-bd97a64494b6",
+      "name": "🔍 Parse Download1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2448,
+        1776
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cat {{ $json.subFile }}"
+      },
+      "id": "a8d17f6b-15f5-47e7-9cc1-1bf7b91866fa",
+      "name": "📖 Read Subtitles1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -2224,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'llama-3.3-70b-versatile',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are an expert at identifying viral moments in video content. Analyze timestamps and find clips that will perform well on TikTok/Instagram Reels.'\n    },\n    {\n      role: 'user',\n      content: `Analyze this timestamped .srt transcript and find 3-5 VIRAL clip moments.\\n\\n.SRT TRANSCRIPT:\\n${$('📖 Read Subtitles1').item.json.stdout.slice(0, 8000)}\\n\\n...transcript continues...\\n\\nCRITERIA:\\n1. Duration: 30-90 seconds (perfect for shorts)\\n2. Strong hook in first 3 seconds\\n3. Complete thought/story (no mid-sentence cuts)\\n4. High retention (keeps attention)\\n5. Shareable (people will send to friends)\\n\\nIMPORTANT: Timestamps MUST match .srt format:\\n00:01:23,456 = 83.456 seconds\\n\\nReturn ONLY this JSON:\\n{\\n  \"clips\": [\\n    {\\n      \"start_time\": \"00:01:23,500\",\\n      \"end_time\": \"00:02:15,200\",\\n      \"title\": \"The Hook That Changed Everything\",\\n      \"hook_text\": \"You won't believe what happened next...\",\\n      \"description\": \"Explains a surprising twist\",\\n      \"virality_score\": 87,\\n      \"reason\": \"Strong curiosity hook, emotional payoff\"\\n    }\\n  ]\\n}`\n    }\n  ],\n  temperature: 0.5,\n  max_tokens: 2000,\n  response_format: { type: 'json_object' }\n}) }}",
+        "options": {}
+      },
+      "id": "af5e8211-9663-49b5-b011-eeadf8cdea97",
+      "name": "🤖 AI: Find Viral Moments1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2000,
+        1696
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zLCqMIGUvYwoTUHZ",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function srtToSeconds(srtTime) {\n  const [time, ms] = srtTime.split(',');\n  const [h, m, s] = time.split(':').map(Number);\n  return h * 3600 + m * 60 + s + (parseInt(ms) / 1000);\n}\n\nconst aiResponse = JSON.parse($input.item.json.choices[0].message.content);\nconst videoData = $('🔍 Parse Download1').item.json;\n\nconst clips = aiResponse.clips.map((clip, idx) => ({\n  ...clip,\n  clip_id: `${videoData.videoId}_${idx + 1}`,\n  start_seconds: srtToSeconds(clip.start_time),\n  end_seconds: srtToSeconds(clip.end_time),\n  duration: srtToSeconds(clip.end_time) - srtToSeconds(clip.start_time),\n  index: idx + 1,\n  videoFile: videoData.videoFile,\n  subFile: videoData.subFile,\n  tempFolder: videoData.tempFolder,\n  subtitleStyle: videoData.subtitleStyle\n}));\n\nconsole.log(`✅ Found ${clips.length} viral moments`);\nclips.forEach(c => {\n  console.log(`   ${c.index}. ${c.title} (${c.duration.toFixed(1)}s, score: ${c.virality_score})`);\n});\n\nreturn clips.map(clip => ({ json: clip }));"
+      },
+      "id": "ffa9aa42-bb8f-4cd0-8ec2-7b605f2caecf",
+      "name": "🎯 Parse Moments1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1792,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "e920919c-baaa-479d-b73c-afb370e70404",
+      "name": "🔀 Split Clips1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1568,
+        1696
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $json.tempFolder }} && ffmpeg -y -ss {{ $json.start_seconds }} -i {{ $json.videoFile }} -t {{ $json.duration }} -vf \"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920\" -c:v libx264 -preset fast -crf 23 -c:a aac clip_{{ $json.index }}_raw.mp4 && echo \"CUT COMPLETE: clip_{{ $json.index }}_raw.mp4\""
+      },
+      "id": "6a385ed4-1097-412e-8cf9-6beaae940f4c",
+      "name": "✂️ Cut Clip (9:16)1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -1344,
+        1616
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'llama-3.3-70b-versatile',\n  messages: [\n    {\n      role: 'user',\n      content: `Generate .srt subtitles for this clip. Extract ONLY the text spoken in this time range.\\n\\nORIGINAL .SRT (full video):\\n${$('📖 Read Subtitles1').item.json.stdout.slice(0, 6000)}\\n\\nCLIP TIME RANGE: ${$('🔀 Split Clips1').item.json.start_time} → ${$('🔀 Split Clips1').item.json.end_time}\\n\\nReturn ONLY .srt format (starting from 00:00:00,000):\\n1\\n00:00:00,000 --> 00:00:03,500\\nYour hook text here\\n\\n2\\n00:00:03,500 --> 00:00:07,000\\nNext subtitle line\\n\\nIMPORTANT:\\n- Start from 00:00:00,000 (clip start)\\n- Keep original timing gaps\\n- 5-8 words per line MAX\\n- No timestamps outside clip duration`\n    }\n  ],\n  temperature: 0.3,\n  max_tokens: 2000\n}) }}",
+        "options": {}
+      },
+      "id": "24d2f6b7-f65c-42dc-9619-017236f273b3",
+      "name": "🤖 AI: Generate Subtitles1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1120,
+        1616
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zLCqMIGUvYwoTUHZ",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $('🔀 Split Clips1').item.json.tempFolder }} && cat > clip_{{ $('🔀 Split Clips1').item.json.index }}.srt << 'EOF'\n{{ $json.choices[0].message.content }}\nEOF\necho \"SUBTITLE FILE CREATED: clip_{{ $('🔀 Split Clips1').item.json.index }}.srt\""
+      },
+      "id": "a03a45b4-5dbf-43fa-bc77-4affdf5d4a6c",
+      "name": "💾 Save Subtitles1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        1616
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $('🔀 Split Clips1').item.json.tempFolder }} && ffmpeg -y -i clip_{{ $('🔀 Split Clips1').item.json.index }}_raw.mp4 -vf \"subtitles=clip_{{ $('🔀 Split Clips1').item.json.index }}.srt:force_style='FontName=Arial Bold,FontSize=32,PrimaryColour=&H00FFFF,OutlineColour=&H000000,Outline=3,Shadow=2,Alignment=2,MarginV=80'\" -c:v libx264 -preset fast -crf 23 -c:a copy clip_{{ $('🔀 Split Clips1').item.json.index }}_final.mp4 && ls -lh clip_{{ $('🔀 Split Clips1').item.json.index }}_final.mp4"
+      },
+      "id": "ad5afd8f-b8af-43b6-973c-71ce47b88016",
+      "name": "🔥 Burn Subtitles1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -688,
+        1616
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/{{ $env.CLOUDINARY_CLOUD_NAME }}/video/upload",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "=data:video/mp4;base64,{{ $('🔥 Burn Subtitles1').item.binary.data.data }}"
+            },
+            {
+              "name": "upload_preset",
+              "value": "={{ $env.CLOUDINARY_UPLOAD_PRESET }}"
+            },
+            {
+              "name": "public_id",
+              "value": "={{ $('🔀 Split Clips1').item.json.clip_id }}"
+            },
+            {
+              "name": "folder",
+              "value": "youtube_clips"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b0bda535-05a3-4be4-9cae-abf0ce31017c",
+      "name": "☁️ Upload to Cloudinary1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -464,
+        1616
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'llama-3.3-70b-versatile',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are a viral caption writer. Create scroll-stopping hooks.'\n    },\n    {\n      role: 'user',\n      content: `Write 3 caption variations for this clip:\\n\\nTITLE: ${$('🔀 Split Clips1').item.json.title}\\nHOOK: ${$('🔀 Split Clips1').item.json.hook_text}\\nDESCRIPTION: ${$('🔀 Split Clips1').item.json.description}\\n\\nGenerate:\\n1. CURIOSITY (\"You won't believe...\")\\n2. VALUE (\"How to...\")\\n3. ENTERTAINMENT (funny/relatable)\\n\\nEach: 80-150 chars, hook + CTA + 5 hashtags\\n\\nReturn JSON:\\n{\\n  \"captions\": [\\n    {\"type\": \"curiosity\", \"text\": \"...\", \"hashtags\": [\"#viral\"]},\\n    {\"type\": \"value\", \"text\": \"...\", \"hashtags\": [\"#tips\"]},\\n    {\"type\": \"entertainment\", \"text\": \"...\", \"hashtags\": [\"#fyp\"]}\\n  ],\\n  \"recommended\": \"curiosity\"\\n}`\n    }\n  ],\n  temperature: 0.7,\n  max_tokens: 800,\n  response_format: { type: 'json_object' }\n}) }}",
+        "options": {}
+      },
+      "id": "fb43ba81-5941-4845-bb14-b38d4c833da0",
+      "name": "🤖 AI: Generate Captions1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        1616
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zLCqMIGUvYwoTUHZ",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const clipData = $('🔀 Split Clips1').item.json;\nconst uploadData = $('☁️ Upload to Cloudinary1').item.json;\nconst captionData = JSON.parse($('🤖 AI: Generate Captions1').item.json.choices[0].message.content);\n\nconsole.log(`✅ Clip ${clipData.index} complete: ${uploadData.secure_url}`);\n\nreturn {\n  json: {\n    clip_id: clipData.clip_id,\n    index: clipData.index,\n    \n    // Video\n    title: clipData.title,\n    description: clipData.description,\n    duration: clipData.duration,\n    start_time: clipData.start_time,\n    end_time: clipData.end_time,\n    \n    // Download\n    video_url: uploadData.secure_url,\n    thumbnail_url: uploadData.secure_url.replace(/\\.(mp4|mov)$/, '.jpg'),\n    \n    // Captions\n    captions: captionData.captions,\n    recommended_caption: captionData.captions.find(c => c.type === captionData.recommended)?.text,\n    \n    // Metadata\n    virality_score: clipData.virality_score,\n    file_size: uploadData.bytes,\n    processed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "f9712001-5a75-427b-944d-7a8253759896",
+      "name": "📦 Package Clip Data1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        1616
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allClips = $input.all().map(item => item.json);\nconst videoData = $('📝 Extract Video ID1').item.json;\n\nconst sortedClips = allClips.sort((a, b) => b.virality_score - a.virality_score);\n\nconsole.log(`\\n🎉 === ALL CLIPS COMPLETE ===`);\nconsole.log(`   Total: ${allClips.length}`);\nconsole.log(`   Avg score: ${Math.round(allClips.reduce((s, c) => s + c.virality_score, 0) / allClips.length)}`);\n\nreturn {\n  json: {\n    success: true,\n    timestamp: new Date().toISOString(),\n    \n    source_video: {\n      id: videoData.videoId,\n      url: videoData.youtubeUrl\n    },\n    \n    summary: {\n      total_clips: allClips.length,\n      average_score: Math.round(allClips.reduce((s, c) => s + c.virality_score, 0) / allClips.length),\n      total_duration: allClips.reduce((s, c) => s + c.duration, 0)\n    },\n    \n    clips: sortedClips,\n    \n    top_3: sortedClips.slice(0, 3).map(c => ({\n      title: c.title,\n      video_url: c.video_url,\n      caption: c.recommended_caption,\n      score: c.virality_score\n    })),\n    \n    meta: {\n      cost: '$0.00',\n      powered_by: 'n8n + yt-dlp + FFmpeg + Groq + Cloudinary'\n    }\n  }\n};"
+      },
+      "id": "b83e3026-a07c-4084-83b5-8f9d1963f24d",
+      "name": "🎁 Final Assembly1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        1840
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}",
+        "options": {}
+      },
+      "id": "13b896f9-7bd9-4519-8869-55aca24fa8f8",
+      "name": "✅ Return Response1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        416,
+        1840
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=rm -rf {{ $('📝 Extract Video ID1').item.json.tempFolder }} && echo \"Cleanup complete\""
+      },
+      "id": "4d23d0ff-f04a-417a-b08e-5e7cdec330f3",
+      "name": "🗑️ Cleanup Temp Files1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        416,
+        1984
+      ]
+    }
+  ],
+  "connections": {
+    "Extract Video ID": {
+      "main": [
+        [
+          {
+            "node": "Start Apify Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Apify Scraper": {
+      "main": [
+        [
+          {
+            "node": "Extract Run ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Run ID": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5s": {
+      "main": [
+        [
+          {
+            "node": "Check Run Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Run Status": {
+      "main": [
+        [
+          {
+            "node": "Is Run Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Run Complete?": {
+      "main": [
+        [
+          {
+            "node": "Get Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Increment Poll Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Results": {
+      "main": [
+        [
+          {
+            "node": "Process Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment Poll Count": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Extract Video ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "Step 1: Summarize & Extract Themes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 1: Summarize & Extract Themes": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis": {
+      "main": [
+        [
+          {
+            "node": "Step 2: Generate Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 2: Generate Content": {
+      "main": [
+        [
+          {
+            "node": "Parse Generated Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Generated Content": {
+      "main": [
+        [
+          {
+            "node": "Step 3: Generate Image Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 3: Generate Image Prompts": {
+      "main": [
+        [
+          {
+            "node": "Merge Image Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Image Prompts": {
+      "main": [
+        [
+          {
+            "node": "Step 4: Score Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 4: Score Content": {
+      "main": [
+        [
+          {
+            "node": "Step 5: Package for Quality Control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step 5: Package for Quality Control": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches1": {
+      "main": [
+        [
+          {
+            "node": "Final Packaging5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Image1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Image1": {
+      "main": [
+        [
+          {
+            "node": "Process Image Response4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limiter1": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Image Response4": {
+      "main": [
+        [
+          {
+            "node": "Rate Limiter1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Packaging5": {
+      "main": [
+        [
+          {
+            "node": "Return Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎬 Webhook: Start1": {
+      "main": [
+        [
+          {
+            "node": "📝 Extract Video ID1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Extract Video ID1": {
+      "main": [
+        [
+          {
+            "node": "⬇️ Download Video + Subs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⬇️ Download Video + Subs1": {
+      "main": [
+        [
+          {
+            "node": "🔍 Parse Download1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Parse Download1": {
+      "main": [
+        [
+          {
+            "node": "📖 Read Subtitles1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📖 Read Subtitles1": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI: Find Viral Moments1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI: Find Viral Moments1": {
+      "main": [
+        [
+          {
+            "node": "🎯 Parse Moments1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Parse Moments1": {
+      "main": [
+        [
+          {
+            "node": "🔀 Split Clips1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Split Clips1": {
+      "main": [
+        [
+          {
+            "node": "✂️ Cut Clip (9:16)1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🎁 Final Assembly1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🗑️ Cleanup Temp Files1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✂️ Cut Clip (9:16)1": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI: Generate Subtitles1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI: Generate Subtitles1": {
+      "main": [
+        [
+          {
+            "node": "💾 Save Subtitles1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Save Subtitles1": {
+      "main": [
+        [
+          {
+            "node": "🔥 Burn Subtitles1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔥 Burn Subtitles1": {
+      "main": [
+        [
+          {
+            "node": "☁️ Upload to Cloudinary1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "☁️ Upload to Cloudinary1": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI: Generate Captions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI: Generate Captions1": {
+      "main": [
+        [
+          {
+            "node": "📦 Package Clip Data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Package Clip Data1": {
+      "main": [
+        [
+          {
+            "node": "🔀 Split Clips1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎁 Final Assembly1": {
+      "main": [
+        [
+          {
+            "node": "✅ Return Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "eedf96fabefd05f23cd4424b2926f082300b74dea251e7861f40b508be3b85f2"
+  }
+}
