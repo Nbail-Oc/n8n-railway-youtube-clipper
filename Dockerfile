@@ -1,7 +1,5 @@
-# Use N8N base image
 FROM n8nio/n8n:latest
 
-# Switch to root to install packages
 USER root
 
 # Install system dependencies
@@ -9,21 +7,26 @@ RUN apk add --no-cache \
     python3 \
     py3-pip \
     ffmpeg \
-    bash \
-    curl
+    git \
+    bash
 
 # Install yt-dlp
 RUN pip3 install --break-system-packages yt-dlp
 
-# Create working directory for temp files
+# Fix permissions for n8n config
 RUN mkdir -p /home/node/.n8n && \
-    chown -R node:node /home/node/.n8n
+    chown -R node:node /home/node/.n8n && \
+    chmod 700 /home/node/.n8n
 
-# Switch back to node user
 USER node
 
-# Expose N8N port
+# Set environment variables
+ENV N8N_HOST=0.0.0.0
+ENV N8N_PORT=5678
+ENV N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+
+# Expose n8n port
 EXPOSE 5678
 
-# Start N8N
-CMD ["n8n"]
+# Use the correct entrypoint from base image
+CMD ["node", "/usr/local/lib/node_modules/n8n/bin/n8n"]
