@@ -1,6 +1,6 @@
-FROM n8nio/n8n:latest
+FROM node:18-alpine
 
-USER root
+WORKDIR /usr/src/app
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -8,25 +8,35 @@ RUN apk add --no-cache \
     py3-pip \
     ffmpeg \
     git \
-    bash
+    bash \
+    tini
 
 # Install yt-dlp
 RUN pip3 install --break-system-packages yt-dlp
 
-# Fix permissions for n8n config
-RUN mkdir -p /home/node/.n8n && \
-    chown -R node:node /home/node/.n8n && \
-    chmod 700 /home/node/.n8n
+# Install n8n globally
+RUN npm install -g n8n
 
-USER node
+# Create non-root user
+RUN addgroup -g 1000 n8n && \
+    adduser -D -u 1000 -G n8n n8n && \
+    mkdir -p /home/n8n/.n8n && \
+    chown -R n8n:n8n /home/n8n
 
-# Set environment variables
-ENV N8N_HOST=0.0.0.0
-ENV N8N_PORT=5678
-ENV N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+USER n8n
 
-# Expose n8n port
+# Environment variables
+ENV N8N_HOST=0.0.0.0 \
+    N8N_PORT=5678 \
+    N8N_PROTOCOL=http \
+    NODE_ENV=production \
+    EXECUTIONS_MODE=regular \
+    N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+
 EXPOSE 5678
 
-# Use the correct entrypoint from base image
-CMD ["node", "/usr/local/lib/node_modules/n8n/bin/n8n"]
+# Use tini for proper signal handling
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Start n8n
+CMD ["n8n"]
