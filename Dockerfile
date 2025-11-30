@@ -9,10 +9,12 @@ RUN apk add --no-cache \
     ffmpeg \
     git \
     bash \
-    tini
+    tini \
+    nodejs \
+    npm
 
-# Install yt-dlp
-RUN pip3 install --break-system-packages yt-dlp
+# Install yt-dlp (latest version)
+RUN pip3 install --break-system-packages --upgrade yt-dlp
 
 # Install n8n globally
 RUN npm install -g n8n
